@@ -1,0 +1,30 @@
+# Build & Simulation Artifacts
+obj_dir/
+*.elf
+*.bin
+*.hex
+*.vcd
+*.o
+*.d
+waveform.vcd
+
+# Test & Verification Artifacts
+*.log
+*.signature
+*.sig
+*.tohost
+*.sig_start
+*.sig_end
+riscof_work/
+verification/build/
+riscv-arch-test/
+
+# Python & Environment
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# OS Specific
+.DS_Store
+Thumbs.db
+Desktop.ini
