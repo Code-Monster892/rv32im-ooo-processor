@@ -1,61 +1,11 @@
 # 2-Way Superscalar Out-of-Order RISC-V (RV32IM) Processor
 
-A high-performance, synthesizable **2-Way Superscalar Out-of-Order (OoO) RV32IM RISC-V Processor Core** implemented in SystemVerilog, designed around the modern **MIPS R10K / RSD architectural paradigm**.
+A high-performance, synthesizable **2-Way Superscalar Out-of-Order (OoO) RV32IM RISC-V Processor** implemented in SystemVerilog, designed around the modern **MIPS R10K / RSD architectural paradigm**.
 
 Features dynamic register renaming, non-blocking reservation stations, common data bus priority arbitration, speculative load/store queuing with zero-latency forwarding, dynamic branch prediction, and precise architectural state retirement via a circular reorder buffer.
 
----
 
-## 🏛️ Microarchitecture Overview
-
-```
-                                  64-bit Dual Instruction Stream
-                                                │
-                                                ▼
-  ┌───────────────────────────────────────────────────────────────────────────────────────────┐
-  │                           STAGE 1: DUAL FETCH & BRANCH PREDICTION                         │
-  │  • 64-bit Dual-Word Fetch (Lane 0 & Lane 1)                                               │
-  │  • 64-Entry Branch Target Buffer (BTB)       • 256-Entry GShare Direction Predictor (BHT)  │
-  │  • 8-Entry Return Address Stack (RAS)        • Speculative PC Redirect & Flush Logic      │
-  └─────────────────────────────────────────────┬─────────────────────────────────────────────┘
-                                                │ Dual 32-bit Decoded Instructions
-                                                ▼
-  ┌───────────────────────────────────────────────────────────────────────────────────────────┐
-  │                            STAGE 2: DUAL REGISTER RENAMING (R10K)                         │
-  │  • 32-Entry Physical Free List ($p32 - $p63) • Cross-Lane Rename Dependency Forwarding    │
-  │  • Speculative Active Rename Alias Table     • Eliminates all WAR / WAW Hazards           │
-  └───────────────────────┬───────────────────────────────────────────┬───────────────────────┘
-                          │ Allocates Physical Tags ($pD)             │ Allocates ROB Entries
-                          ▼                                           ▼
-  ┌───────────────────────────────────────────┐   ┌───────────────────────────────────────────┐
-  │      STAGE 3: DISPATCH & ISSUE QUEUE      │   │         IN-ORDER REORDER BUFFER (ROB)     │
-  │  • 8-Entry Tag-Only Reservation Station   │   │  • 32-Entry Circular FIFO Array           │
-  │  • Out-of-Order Dynamic Operand Wakeup    │   │  • Dual-Commit per Cycle ($IPC \le 2.0$)  │
-  │  • Dynamic Priority CDB Result Snooping   │   │  • Precise Exception & Branch Recovery    │
-  │  • 64-Word Physical Register File (PRF)   │   │  • Retirement RAT (RRAT) State Commit     │
-  └───────────────────────┬───────────────────┘   └───────────────────────────▲───────────────┘
-                          │ Issue Ready Instructions                          │
-                          ▼                                                   │ Writeback Results
-  ┌────────────────────────────────────────────────────────────────────────┐  │
-  │                     STAGE 4: DUAL EXECUTION LANES                      │  │
-  │  • Dual 32-bit Integer ALUs (Parallel Lane 0 & Lane 1)                 │  │
-  │  • Multi-Cycle Hardware Multiplier / Divider (RV32M Extension)         │  │
-  │  • Memory Load/Store Queue (LSQ):                                      │  │
-  │    - 16-Entry Speculative Store Buffer with Store-to-Load Forwarding   │──┘
-  │    - Speculative Load Queue with Address Conflict Detection            │
-  └───────────────────────────────────────┬────────────────────────────────┘
-                                          │
-                                          ▼
-  ┌───────────────────────────────────────────────────────────────────────────────────────────┐
-  │                       STAGE 5: COMMON DATA BUS (CDB) ARBITER                              │
-  │  • Dynamic Priority Arbitration: MEMORY > MULTIPLIER > ALU                                │
-  │  • Broadcasts Result Tags & Data to Wake Up Waiting Reservation Stations                  │
-  └───────────────────────────────────────────────────────────────────────────────────────────┘
-```
-
----
-
-## ✨ Key Architectural Features
+## Key Architectural Features
 
 ### 1. Dual-Issue Front-End & Dynamic Branch Prediction
 * **64-bit Dual-Fetch**: Simultaneously fetches two instructions per cycle across aligned memory words.
@@ -64,9 +14,9 @@ Features dynamic register renaming, non-blocking reservation stations, common da
 * **Return Address Stack (RAS)**: 8-entry hardware LIFO stack predicting subroutine returns with 100% accuracy.
 
 ### 2. MIPS R10K Register Renaming
-* **False Dependency Elimination**: Removes all Write-After-Read (WAR) and Write-After-Write (WAW) hazards by decoupling 32 architectural registers ($x0 \dots x31$) into a **64-entry Physical Register File (PRF)**.
+* **False Dependency Elimination**: Removes all Write-After-Read (WAR) and Write-After-Write (WAW) hazards by decoupling 32 architectural registers (x0 to x31) into a **64-entry Physical Register File (PRF)**.
 * **Dual Cross-Lane Renaming**: Resolves intra-cycle RAW dependencies when Instruction 1 consumes the destination register allocated by Instruction 0 in the same cycle.
-* **Free List & Active RAT**: 32-entry circular FIFO allocating physical tags ($p32 \dots p63$).
+* **Free List & Active RAT**: 32-entry circular FIFO allocating physical tags.
 
 ### 3. Out-of-Order Execution & CDB Arbitration
 * **Tag-Only Reservation Stations (RS)**: 8-entry unified issue queue storing only physical register tags and ready bitmasks (no wide 32-bit data payload), minimizing silicon area and routing congestion.
@@ -84,18 +34,17 @@ Features dynamic register renaming, non-blocking reservation stations, common da
 
 ---
 
-## 🏆 Hardware Certification & Benchmarks
+## Hardware Certification & Benchmarks
 
 | Benchmark Suite | Measured Result | FPGA Equivalent (@50 MHz) | Functional Status |
 | :--- | :--- | :--- | :--- |
 | **Dhrystone 2.1** | **0.70 DMIPS/MHz** (812 cycles/run) | **35.00 DMIPS** | Verified (0 Errors / 500 Iterations) |
 | **EEMBC CoreMark 1.0** | **1.76 CoreMark/MHz** (566,700 cycles/iter) | **88.00 CoreMark** | Passed (100% Golden CRC-16 Match) |
-| **Prince of Persia (SDLPoP)** | **6.09 MHz Simulation** | **Real-Time 60 FPS** | Verified (Title Screen & Level 1 Gameplay) |
 | **Real-Time 3D Donut Engine** | **3.87 MHz Simulation** | **30.0 FPS** | Verified (16.16 Fixed-Point 3D Z-Buffer) |
 
 ---
 
-## 📁 Repository Structure
+## Repository Structure
 
 ```
 rv32im-ooo-processor/
@@ -138,7 +87,7 @@ rv32im-ooo-processor/
 
 ---
 
-## 🛠️ Prerequisites & Toolchain
+## Prerequisites & Toolchain
 
 * **RISC-V GCC Cross-Compiler**: `riscv64-unknown-elf-gcc` (`-march=rv32im -mabi=ilp32`)
 * **Verilator**: `verilator` (v5.0 or later)
@@ -147,7 +96,7 @@ rv32im-ooo-processor/
 
 ---
 
-## 🚀 How to Build & Run
+## How to Build & Run
 
 ### 1. Compile Software Firmware
 Compiles `crt0.s` and `main.c`, extracts raw machine instructions, and formats `firmware.hex`:
