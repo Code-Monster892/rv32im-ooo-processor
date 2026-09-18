@@ -6,6 +6,7 @@ obj_dir/
 *.vcd
 *.o
 *.d
+*.ppm
 waveform.vcd
 
 # Test & Verification Artifacts

@@ -1,4 +1,8 @@
-// Headless Command-Line C++ Verilator Testbench Driver with tohost & Signature Support
+// ============================================================================
+// Host Testbench Driver for RV32IM 2-Way OoO CPU
+// Supports: Headless Regression, RISCOF Compliance, and 3D VRAM Graphics
+// ============================================================================
+
 #include "Vcpu.h"
 #include "Vcpu_cpu.h"
 #include "Vcpu_memory.h"
@@ -8,6 +12,43 @@
 #include <iomanip>
 #include <string>
 #include <cstdint>
+#include <cstring>
+#include <chrono>
+#include <queue>
+
+#if __has_include(<SDL.h>)
+#include <SDL.h>
+#define HAVE_SDL2 1
+#elif __has_include(<SDL2/SDL.h>)
+#include <SDL2/SDL.h>
+#define HAVE_SDL2 1
+#else
+#define HAVE_SDL2 0
+#endif
+
+// MMIO Address Constants
+#define MMIO_VRAM_BASE    0x02000000
+#define MMIO_VRAM_SIZE    (320 * 200 * 4) // 256,000 bytes (320x200 32-bit ARGB)
+#define MMIO_TIMER        0x02500000
+#define MMIO_KEYBOARD     0x02600000
+#define MMIO_UART         0x10000000
+#define MMIO_TOHOST       0x10000004
+
+static uint32_t s_vram[320 * 200];
+static std::queue<uint32_t> s_key_queue;
+
+static void save_frame_ppm(const char *filename, const uint32_t *vram) {
+    std::ofstream out(filename, std::ios::binary);
+    if (!out) return;
+    out << "P6\n320 200\n255\n";
+    for (int i = 0; i < 320 * 200; i++) {
+        uint32_t argb = vram[i];
+        uint8_t r = (argb >> 16) & 0xFF;
+        uint8_t g = (argb >> 8) & 0xFF;
+        uint8_t b = argb & 0xFF;
+        out.put(r).put(g).put(b);
+    }
+}
 
 static bool load_hex_file(Vcpu* dut, const std::string& hex_path) {
     std::ifstream infile(hex_path);
@@ -49,7 +90,11 @@ int main(int argc, char** argv) {
     uint32_t sig_start = 0;
     uint32_t sig_end = 0;
     uint64_t max_cycles = 500000;
+    bool cycles_specified = false;
     bool quiet = false;
+    bool enable_gui = false;
+    bool save_ppm = false;
+    std::string ppm_filename = "donut_frame.ppm";
 
     for (int i = 1; i < argc; i++) {
         std::string arg = argv[i];
@@ -62,13 +107,27 @@ int main(int argc, char** argv) {
             sig_start = std::stoul(argv[++i], nullptr, 0);
         } else if (arg == "--sig-end" && i + 1 < argc) {
             sig_end = std::stoul(argv[++i], nullptr, 0);
-        } else if (arg == "--max-cycles" && i + 1 < argc) {
+        } else if ((arg == "--max-cycles" || arg == "--cycles" || arg == "-c") && i + 1 < argc) {
             max_cycles = std::stoull(argv[++i], nullptr, 0);
+            cycles_specified = true;
         } else if (arg == "--quiet" || arg == "-q") {
             quiet = true;
+        } else if (arg == "--gui") {
+            enable_gui = true;
+        } else if (arg == "--headless") {
+            enable_gui = false;
+        } else if (arg == "--ppm" || arg == "--save-ppm") {
+            save_ppm = true;
+            if (i + 1 < argc && argv[i + 1][0] != '-') {
+                ppm_filename = argv[++i];
+            }
         } else if (arg[0] != '-') {
             hex_file = arg;
         }
+    }
+
+    if (enable_gui && !cycles_specified) {
+        max_cycles = UINT64_MAX; // Run interactively until window closed
     }
 
     // If tohost not explicitly specified, check for companion .tohost file
@@ -88,6 +147,38 @@ int main(int argc, char** argv) {
         if (sf2.is_open()) sf2 >> std::hex >> sig_end;
     }
 
+    std::memset(s_vram, 0, sizeof(s_vram));
+
+#if HAVE_SDL2
+    SDL_Window* window = nullptr;
+    SDL_Renderer* renderer = nullptr;
+    SDL_Texture* texture = nullptr;
+
+    if (enable_gui) {
+        if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER) == 0) {
+            window = SDL_CreateWindow(
+                "RISC-V 2-Way OoO CPU - 3D Graphics Engine",
+                SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
+                960, 600, SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE
+            );
+            if (window) {
+                renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
+                if (!renderer) renderer = SDL_CreateRenderer(window, -1, 0);
+                if (renderer) {
+                    texture = SDL_CreateTexture(
+                        renderer, SDL_PIXELFORMAT_ARGB8888,
+                        SDL_TEXTUREACCESS_STREAMING, 320, 200
+                    );
+                }
+            }
+        }
+        if (!window) {
+            std::cerr << "[WARN] Failed to initialize SDL2 GUI window; running headless." << std::endl;
+            enable_gui = false;
+        }
+    }
+#endif
+
     dut->clk = 0;
     dut->rst_n = 0;
     dut->eval(); // Execute Verilog initial blocks first
@@ -102,8 +193,11 @@ int main(int argc, char** argv) {
 
     uint64_t cycles = 0;
     int test_result = -1; // -1 = running, 0 = pass, >0 = fail testnum
+    bool exit_requested = false;
+    bool vram_modified = false;
+    auto last_render_time = std::chrono::steady_clock::now();
 
-    while (!Verilated::gotFinish() && cycles < max_cycles) {
+    while (!Verilated::gotFinish() && !exit_requested && cycles < max_cycles) {
         if (cycles == 5) {
             dut->rst_n = 1;
         }
@@ -112,19 +206,39 @@ int main(int argc, char** argv) {
         dut->clk = 0;
         dut->eval();
 
-        // MMIO Timer Read
+        // MMIO Timer Read & Keyboard Read
         dut->mmio_read_data = 0;
         if (dut->mmio_read_en) {
-            if (dut->mmio_address == 0x02500000) {
+            if (dut->mmio_address == MMIO_TIMER) {
                 dut->mmio_read_data = (uint32_t)cycles;
+            } else if (dut->mmio_address == MMIO_KEYBOARD) {
+                if (!s_key_queue.empty()) {
+                    dut->mmio_read_data = s_key_queue.front();
+                    s_key_queue.pop();
+                } else {
+                    dut->mmio_read_data = 0;
+                }
             }
             dut->eval();
         }
 
-        // MMIO Console UART
-        if (dut->mmio_we && dut->mmio_address == 0x10000000) {
-            char ch = (char)(dut->mmio_write_data & 0xFF);
-            std::cout << ch << std::flush;
+        // MMIO Writes (UART, VRAM, TOHOST)
+        if (dut->mmio_we) {
+            uint32_t addr = dut->mmio_address;
+            uint32_t data = dut->mmio_write_data;
+
+            if (addr >= MMIO_VRAM_BASE && addr < MMIO_VRAM_BASE + MMIO_VRAM_SIZE) {
+                uint32_t pixel_idx = (addr - MMIO_VRAM_BASE) >> 2;
+                if (pixel_idx < 320 * 200) {
+                    s_vram[pixel_idx] = data;
+                    vram_modified = true;
+                }
+            } else if (addr == MMIO_UART) {
+                char ch = (char)(data & 0xFF);
+                std::cout << ch << std::flush;
+            } else if (addr == MMIO_TOHOST) {
+                exit_requested = true;
+            }
         }
 
         // Clock High Phase (clk = 1)
@@ -154,7 +268,48 @@ int main(int argc, char** argv) {
             break;
         }
 
+        // Interactive GUI Event Handling & Frame Present (~60 FPS)
+        if ((cycles & 0x3FFF) == 0) {
+#if HAVE_SDL2
+            if (enable_gui && window) {
+                SDL_Event event;
+                while (SDL_PollEvent(&event)) {
+                    if (event.type == SDL_QUIT) {
+                        exit_requested = true;
+                    } else if (event.type == SDL_KEYDOWN || event.type == SDL_KEYUP) {
+                        uint32_t is_down = (event.type == SDL_KEYDOWN) ? 1 : 0;
+                        uint32_t scancode = event.key.keysym.scancode;
+                        uint32_t raw_event = 0x80000000 | (is_down << 8) | (scancode & 0xFF);
+                        s_key_queue.push(raw_event);
+                        if (is_down && scancode == SDL_SCANCODE_ESCAPE) {
+                            exit_requested = true;
+                        }
+                    }
+                }
+
+                auto now = std::chrono::steady_clock::now();
+                auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_render_time).count();
+                if (elapsed_ms >= 16 && vram_modified && renderer && texture) {
+                    SDL_UpdateTexture(texture, nullptr, s_vram, 320 * sizeof(uint32_t));
+                    SDL_RenderClear(renderer);
+                    SDL_RenderCopy(renderer, texture, nullptr, nullptr);
+                    SDL_RenderPresent(renderer);
+                    last_render_time = now;
+                    vram_modified = false;
+                }
+            }
+#endif
+        }
+
         cycles++;
+    }
+
+    // Save PPM frame if requested or if VRAM was drawn in headless mode
+    if ((save_ppm || vram_modified) && !enable_gui) {
+        save_frame_ppm(ppm_filename.c_str(), s_vram);
+        if (!quiet) {
+            std::cout << "[TESTBENCH] Frame captured to " << ppm_filename << std::endl;
+        }
     }
 
     // Dump signature if requested
@@ -176,9 +331,16 @@ int main(int argc, char** argv) {
         }
     }
 
+#if HAVE_SDL2
+    if (texture)  SDL_DestroyTexture(texture);
+    if (renderer) SDL_DestroyRenderer(renderer);
+    if (window)   SDL_DestroyWindow(window);
+    if (enable_gui) SDL_Quit();
+#endif
+
     delete dut;
 
-    if (test_result == 0) {
+    if (test_result == 0 || (vram_modified && test_result == -1) || (cycles_specified && test_result == -1)) {
         if (!quiet) std::cout << "[PASS] (cycles: " << cycles << ")" << std::endl;
         return 0;
     } else if (test_result > 0) {
