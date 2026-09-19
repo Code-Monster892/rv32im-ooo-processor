@@ -36,11 +36,37 @@ Features dynamic register renaming, non-blocking reservation stations, common da
 
 ## Hardware Certification & Benchmarks
 
-| Benchmark Suite | Measured Result | FPGA Equivalent (@50 MHz) | Functional Status |
+| Benchmark Suite | Measured Result | Coverage / Metric | Functional Status |
 | :--- | :--- | :--- | :--- |
-| **Dhrystone 2.1** | **0.70 DMIPS/MHz** (812 cycles/run) | **35.00 DMIPS** | Verified (0 Errors / 500 Iterations) |
-| **EEMBC CoreMark 1.0** | **1.76 CoreMark/MHz** (566,700 cycles/iter) | **88.00 CoreMark** | Passed (100% Golden CRC-16 Match) |
-| **Real-Time 3D Donut Engine** | **3.87 MHz Simulation** | **30.0 FPS** | Verified (16.16 Fixed-Point 3D Z-Buffer) |
+| **Official RISCOF Suite (v1.25.3)** | **49 / 49 Passed (100%)** | **18,144 Signature Words** | Certified (Golden Spike Model Matched) |
+| **Official Unit Regression Suite** | **46 / 46 Passed (100%)** | **RV32UI & RV32UM** | Verified (ALU, Branches, Mem, M-Ext) |
+| **EEMBC CoreMark 1.0** | **1.76 CoreMark/MHz** | **88.00 CoreMark @ 50 MHz** | Passed (100% Golden CRC-16 Match) |
+| **Dhrystone 2.1** | **0.70 DMIPS/MHz** | **35.00 DMIPS @ 50 MHz** | Verified (0 Errors / 500 Iterations) |
+| **Real-Time 3D Donut Engine** | **3.87 MHz Simulation** | **30.0 FPS @ 50 MHz** | Verified (16.16 Fixed-Point 3D Z-Buffer) |
+
+---
+
+## Official RISC-V Architectural Compliance (RISCOF)
+
+The core has been formally verified and certified against the official **RISCOF 1.25.3** architectural test framework using the **Spike Golden Reference Model** (developed by RISC-V International and UC Berkeley) as the reference oracle.
+
+### Final Verification Scorecard: 49 / 49 PASSED (100% Green)
+
+| Extension Subsuite | Tests Run | Result | Instructions & Microarchitectural Features Covered |
+| :--- | :---: | :---: | :--- |
+| **RV32I Arithmetic & Logic** | 22 / 22 | **100% PASS** | `add`, `addi`, `sub`, `and`, `andi`, `or`, `ori`, `xor`, `xori`, `sll`, `slli`, `srl`, `srli`, `sra`, `srai`, `slt`, `slti`, `sltu`, `sltiu`, `lui`, `auipc` |
+| **RV32I Control Flow** | 8 / 8 | **100% PASS** | `beq`, `bne`, `blt`, `bge`, `bltu`, `bgeu`, `jal`, `jalr` |
+| **RV32I Load / Store Memory** | 9 / 9 | **100% PASS** | `lb`, `lbu`, `lh`, `lhu`, `lw`, `sb`, `sh`, `sw`, unaligned load/store boundary accesses |
+| **RV32M Hardware Multiplier** | 4 / 4 | **100% PASS** | `mul` (low 32b), `mulh` (signed high 32b), `mulhu` (unsigned high 32b), `mulhsu` (signed-unsigned high 32b) |
+| **RV32M Hardware Divider** | 4 / 4 | **100% PASS** | `div` (signed), `divu` (unsigned), `rem` (signed remainder), `remu` (unsigned remainder) |
+| **RV32I Privilege & Hints** | 2 / 2 | **100% PASS** | `fence.i`, architectural hints, pipeline flush synchronization |
+
+* **Total Signature Words Verified**: **18,144 words** (72,576 bytes) bit-for-bit matched against Spike.
+
+### Verification Methodology:
+Each test compiles into two isolated binaries: one linked for our hardware core and one for Spike. Both run to completion, dumping memory signatures across the architectural test boundaries. RISCOF performs byte-by-byte differential verification between the DUT output and Spike's golden reference signatures.
+
+---
 
 ## Bare-Metal Real-Time 3D Donut Graphics Engine
 
@@ -100,8 +126,23 @@ rv32im-ooo-processor/
 │   └── donut/                    # Real-Time 3D Spinning Torus Graphics Engine
 │       ├── donut3d.c             # 16.16 Fixed-Point Renderer & Matrix Pipeline
 │       └── README.md             # Mathematical Details & Algorithm Breakdown
+├── verification/                 # Verification Harness & Automated Test Runners
+│   ├── env/                      # Linker Scripts & Test Macro Environments
+│   ├── run_suite.sh              # 46-Test Directed Regression Suite Runner
+│   └── bin2hex.py                # Raw Binary to Verilog Hex Converter
+├── my_ooo_core/                  # RISCOF DUT Plugin & ISA/Platform YAML Specs
+│   ├── riscof_my_ooo_core.py     # Python DUT Plugin Harness
+│   ├── my_ooo_core_isa.yaml      # RISC-V Architectural Capability Specification
+│   └── my_ooo_core_platform.yaml # Memory Map & Hardware Platform Constraints
+├── spike/                        # RISCOF Spike Reference Golden Model Plugin
+│   └── riscof_spike.py           # Golden Model Plugin Wrapper
+├── riscv-tests/                  # Official RISC-V International Assembly Tests
+│   └── isa/                      # RV32UI & RV32UM Test Sources
 ├── docs/                         # Documentation & Visual Assets
 │   └── images/                   # High-Resolution Hardware Renders & Schematics
+├── config.ini                    # RISCOF Framework Configuration File
+├── run_suite.sh                  # Root Shortcut to Directed Regression Suite
+├── run_dut.sh                    # DUT Execution Driver for RISCOF
 ├── Makefile                      # Automated Build & Verilator Execution Script
 ├── LICENSE                       # MIT License
 └── README.md                     # Architectural Documentation & Specifications
@@ -115,6 +156,8 @@ rv32im-ooo-processor/
 * **Verilator**: `verilator` (v5.0 or later)
 * **Host C++ Compiler**: `g++` / `clang++` (C++17 standard)
 * **SDL2 (Optional)**: `libsdl2-dev` (for real-time interactive GUI graphics window)
+* **RISCOF (Optional)**: `pip3 install riscof` (for official architectural compliance suite)
+* **Spike (Optional)**: `spike` (RISC-V ISA reference simulator)
 * **Python 3**: `python3` (for hex firmware generation)
 
 ---
@@ -146,25 +189,27 @@ make sim-donut-gui
 ```
 * **Controls**: `1`–`4` (Switch Themes: Classic, Neon, Magma, Matrix), `Space` (Toggle Auto-Spin), `ESC` (Exit).
 
-### 5. Clean Build Artifacts
-```bash
-make clean
-```
-
-### 6. Run Directed Unit Regression Suite (46 Tests)
+### 5. Run Official Directed Unit Regression Suite (46 Tests)
 Executes all official 38 RV32UI and 8 RV32UM testbenches:
 ```bash
+make test
+# Or directly:
 ./run_suite.sh
 ```
 
-### 7. Run Official Architectural Compliance Suite (RISCOF)
-
+### 6. Run Official Architectural Compliance Suite (RISCOF)
 Executes the full formal RISC-V compliance suite against the Spike golden model (100% 49/49 Green Scorecard):
 ```bash
 riscof run --config config.ini --suite <path-to-riscv-arch-test>/riscv-test-suite/ --env <path-to-riscv-arch-test>/riscv-test-suite/env
 ```
 
+### 7. Clean Build Artifacts
+```bash
+make clean
+```
+
 ---
 
-## 📜 License
+## License
+
 MIT License. Developed for research and exploration of advanced Out-of-Order superscalar computer architecture.

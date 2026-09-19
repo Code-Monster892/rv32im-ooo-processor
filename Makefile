@@ -22,7 +22,7 @@ SW_SRCS  = $(SW_DIR)/crt0.s $(SW_DIR)/main.c
 SDL2_CFLAGS := $(shell sdl2-config --cflags 2>/dev/null || echo "")
 SDL2_LIBS   := $(shell sdl2-config --libs 2>/dev/null || echo "")
 
-.PHONY: all clean software sim donut sim-donut sim-donut-gui verilate
+.PHONY: all clean software sim donut sim-donut sim-donut-gui verilate test
 
 all: software sim
 
@@ -71,8 +71,14 @@ sim-donut-gui: donut verilate
 	@echo "--- Running 3D Donut Interactive Simulation (SDL2 Window) ---"
 	./obj_dir/Vcpu --gui
 
+# 7. Run Official Directed Unit Regression Suite (46 Tests)
+test: verilate
+	@echo "--- Running Official Directed Regression Suite (46 Tests) ---"
+	./run_suite.sh
+
 clean:
 	rm -rf obj_dir waveform.vcd prog.elf prog.bin game.elf game.bin firmware.hex *.ppm *.bmp
+
 
 
 
