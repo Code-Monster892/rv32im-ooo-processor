@@ -4,6 +4,7 @@ A high-performance, synthesizable **2-Way Superscalar Out-of-Order (OoO) RV32IM 
 
 Features dynamic register renaming, non-blocking reservation stations, common data bus priority arbitration, speculative load/store queuing with zero-latency forwarding, dynamic branch prediction, and precise architectural state retirement via a circular reorder buffer.
 
+This project is widely based on my previous one which was a 5 stage pipelined rv32im architecture which was a further upgradation of another project that was a single cycle rv32im processor on which i was able to run DOOM. This time i decided to verify it against a custom testbench (the spinning donut) And also the official RISCOF suite to test it against the spike golden model...fortunately we received a very good score which certifies our model to be completely functionable and hopefully FPGA synthesizable which is something i would like to do as a future project. Following are the few things you should know about this architecture and a few stats that were collected at the finality of this amazing project:
 
 ## Key Architectural Features
 
